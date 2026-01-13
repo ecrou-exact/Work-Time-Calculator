@@ -31,14 +31,15 @@ TEXT = {
         "remaining": "Temps restant",
         "departure": "Heure de départ",
         "done": "OBJECTIF ATTEINT !",
-        "overtime": "Heures supplémentaires",
         "quit": "👋 Programme quitté.",
         "invalid": "❌ Saisie invalide",
         "now": "Heure actuelle",
         "pause_total": "Total pauses",
 
-        # AIDES
-        "help_goal": "Formats acceptés: 8h30 | 8:30 | 8 | ENTER = 8h30",
+        "flex_gain": "Flex time gagné",
+        "flex_loss": "Flex time perdu",
+
+        "help_goal": "Formats: 8h30 | 8:30 | 8 | ENTER = 8h30",
         "help_time": "Formats: 7 | 7h | 07:30 | ENTER = heure actuelle",
         "help_pause": "Réponds o/oui pour ajouter une pause, n/non sinon",
     },
@@ -54,14 +55,15 @@ TEXT = {
         "remaining": "Remaining time",
         "departure": "Departure time",
         "done": "GOAL REACHED!",
-        "overtime": "Overtime",
         "quit": "👋 Program exited.",
         "invalid": "❌ Invalid input",
         "now": "Current time",
         "pause_total": "Total breaks",
 
-        # HELP
-        "help_goal": "Accepted formats: 8h30 | 8:30 | 8 | ENTER = 8h30",
+        "flex_gain": "Flex time earned",
+        "flex_loss": "Flex time lost",
+
+        "help_goal": "Formats: 8h30 | 8:30 | 8 | ENTER = 8h30",
         "help_time": "Formats: 7 | 7h | 07:30 | ENTER = now",
         "help_pause": "Answer y/yes to add a break, n/no otherwise",
     },
@@ -73,18 +75,16 @@ AIDE GLOBALE
 -------------
 - Quitter : q | quit | exit | CTRL+C
 - Aide : help ou ?
-- Formats heure acceptés :
-  7 | 07 | 7h | 07h | 7:30 | 07;30 | 07/30
-- ENTER = heure actuelle
+- Formats acceptés :
+  7 | 7h | 07:30 | 8h30 | 8:30
 """,
     "en": """
 GLOBAL HELP
 -------------
 - Quit: q | quit | exit | CTRL+C
 - Help: help or ?
-- Accepted time formats:
-  7 | 07 | 7h | 07h | 7:30 | 07;30 | 07/30
-- ENTER = current time
+- Accepted formats:
+  7 | 7h | 07:30 | 8h30 | 8:30
 """
 }
 
@@ -113,14 +113,15 @@ def input_safe(prompt, help_topic=None):
             continue
         return value
 
+# ===============================
+# PARSING
+# ===============================
 def parse_time(user_input):
     s = re.sub(r"[h;,./\s]", ":", user_input.lower())
     s = re.sub(r":+", ":", s)
 
     if ":" not in s:
         s += ":00"
-    if s.endswith(":"):
-        s += "00"
 
     h, m = map(int, s.split(":"))
     if not (0 <= h <= 23 and 0 <= m <= 59):
@@ -135,8 +136,7 @@ def get_time_input(label):
             "help_time"
         )
         if user_input == "":
-            now = datetime.now()
-            return datetime.strptime(now.strftime("%H:%M"), "%H:%M")
+            return datetime.strptime(datetime.now().strftime("%H:%M"), "%H:%M")
         try:
             return parse_time(user_input)
         except ValueError:
@@ -146,8 +146,22 @@ def parse_duration(user_input):
     s = re.sub(r"[h;,./\s]", ":", user_input.lower())
     if ":" not in s:
         s += ":00"
+
     h, m = map(int, s.split(":"))
+    if h < 0 or m < 0 or m >= 60:
+        raise ValueError
+
     return timedelta(hours=h, minutes=m)
+
+def get_duration_input(label, default):
+    while True:
+        user_input = input_safe(f"{label} [8h30] : ", "help_goal")
+        if user_input == "":
+            return default
+        try:
+            return parse_duration(user_input)
+        except ValueError:
+            print(COLORS["error"] + TEXT[LANG]["invalid"] + COLORS["reset"])
 
 def format_td(td):
     minutes = int(td.total_seconds() // 60)
@@ -161,7 +175,6 @@ def format_td(td):
 def main():
     global LANG
 
-    # 🌍 Langue
     lang = input("Language / Langue (fr/en) [fr] : ").strip().lower()
     LANG = lang if lang in TEXT else "fr"
 
@@ -169,21 +182,13 @@ def main():
     print(TEXT[LANG]["title"].center(60))
     print("=" * 60 + COLORS["reset"])
 
-    goal_input = input_safe(
-        f"{TEXT[LANG]['goal']} [8h30] : ",
-        "help_goal"
-    )
-    work_goal = parse_duration(goal_input) if goal_input else DEFAULT_GOAL
-
+    work_goal = get_duration_input(TEXT[LANG]["goal"], DEFAULT_GOAL)
     arrival = get_time_input(TEXT[LANG]["arrival"])
+
     total_pause = timedelta()
 
     while True:
-        add = input_safe(
-            f"{TEXT[LANG]['add_pause']} : ",
-            "help_pause"
-        ).lower() or "n"
-
+        add = input_safe(f"{TEXT[LANG]['add_pause']} : ", "help_pause").lower() or "n"
         if add in {"n", "no", "non"}:
             break
         if add in {"o", "y", "yes", "oui"}:
@@ -198,6 +203,7 @@ def main():
     worked = (current - arrival) - total_pause
     remaining = work_goal - worked
     departure = arrival + work_goal + total_pause
+    flex_time = worked - work_goal
 
     print(COLORS["info"] + "\n" + TEXT[LANG]["results"].center(60, "-") + COLORS["reset"])
     print(f"{TEXT[LANG]['now']:25}: {now.strftime('%H:%M')}")
@@ -210,7 +216,11 @@ def main():
     else:
         print(COLORS["success"] + TEXT[LANG]["done"])
         print(f"{TEXT[LANG]['departure']:25}: {departure.strftime('%H:%M')}")
-        print(f"{TEXT[LANG]['overtime']:25}: {format_td(worked - work_goal)}" + COLORS["reset"])
+        if flex_time > timedelta(0):
+            print(f"{TEXT[LANG]['flex_gain']:25}: {format_td(flex_time)}")
+        elif flex_time < timedelta(0):
+            print(f"{TEXT[LANG]['flex_loss']:25}: {format_td(flex_time)}")
+        print(COLORS["reset"], end="")
 
 # ===============================
 # LANCEMENT
@@ -220,4 +230,3 @@ if __name__ == "__main__":
         main()
     except KeyboardInterrupt:
         print("\n" + COLORS["warning"] + "👋 Bye !" + COLORS["reset"])
-
